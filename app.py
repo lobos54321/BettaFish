@@ -319,13 +319,14 @@ def initialize_system_components():
             if initialize_report_engine():
                 logs.append("ReportEngine 初始化成功")
             else:
-                msg = "ReportEngine 初始化失败"
+                msg = "ReportEngine 初始化失败（非关键组件，继续运行）"
                 logs.append(msg)
-                errors.append(msg)
+                # 不再将 ReportEngine 失败添加到 errors，允许系统继续运行
+                logger.warning(msg)
         except Exception as exc:  # pragma: no cover
-            msg = f"ReportEngine 初始化异常: {exc}"
+            msg = f"ReportEngine 初始化异常: {exc}（非关键组件，继续运行）"
             logs.append(msg)
-            errors.append(msg)
+            logger.warning(msg)
 
     if errors:
         cleanup_processes()
