@@ -1134,46 +1134,73 @@ def get_forum_log_history():
 
 @app.route('/api/search', methods=['POST'])
 def search():
-    """统一搜索接口"""
+    """统一搜索接口 - 直接调用 Python 引擎模块"""
     data = request.get_json()
     query = data.get('query', '').strip()
-    
+
     if not query:
         return jsonify({'success': False, 'message': '搜索查询不能为空'})
-    
-    # ForumEngine论坛已经在后台运行，会自动检测搜索活动
-    # logger.info("ForumEngine: 搜索请求已收到，论坛将自动检测日志变化")
-    
-    # 检查哪些应用正在运行
-    check_app_status()
-    running_apps = [name for name, info in processes.items() if info['status'] == 'running']
-    
-    if not running_apps:
-        return jsonify({'success': False, 'message': '没有运行中的应用'})
-    
-    # 向运行中的应用发送搜索请求
-    results = {}
-    api_ports = {'insight': 8501, 'media': 8502, 'query': 8503}
-    
-    for app_name in running_apps:
-        try:
-            api_port = api_ports[app_name]
-            # 调用Streamlit应用的API端点
-            response = requests.post(
-                f"http://localhost:{api_port}/api/search",
-                json={'query': query},
-                timeout=10
-            )
-            if response.status_code == 200:
-                results[app_name] = response.json()
-            else:
-                results[app_name] = {'success': False, 'message': 'API调用失败'}
-        except Exception as e:
-            results[app_name] = {'success': False, 'message': str(e)}
-    
-    # 搜索完成后可以选择停止监控，或者让它继续运行以捕获后续的处理日志
-    # 这里我们让监控继续运行，用户可以通过其他接口手动停止
-    
+
+    logger.info(f"[API Search] 收到搜索请求: {query}")
+
+    results = {
+        'insight': {'success': False, 'data': None},
+        'media': {'success': False, 'data': None},
+        'query': {'success': False, 'data': None}
+    }
+
+    # 尝试直接调用数据库搜索（不依赖 Streamlit 应用）
+    try:
+        from InsightEngine.tools import MediaCrawlerDB
+        db = MediaCrawlerDB()
+
+        # 执行全局话题搜索
+        search_result = db.search_topic_globally(query, limit_per_table=50)
+
+        if search_result and search_result.results:
+            # 提取热门话题和关键词
+            topics = []
+            keywords = []
+
+            # 从搜索结果中提取话题
+            for r in search_result.results[:20]:
+                if r.title_or_content:
+                    # 简单的关键词提取
+                    title = r.title_or_content[:100]
+                    if title and title not in topics:
+                        topics.append(title)
+
+            # 提取 source_keyword 作为关键词
+            for r in search_result.results:
+                if r.source_keyword and r.source_keyword not in keywords:
+                    keywords.append(r.source_keyword)
+
+            results['insight'] = {
+                'success': True,
+                'data': {
+                    'topics': topics[:5],
+                    'keywords': keywords[:10],
+                    'total_results': search_result.results_count,
+                    'source': 'database'
+                }
+            }
+            results['query'] = {
+                'success': True,
+                'data': {
+                    'related_topics': topics[:5],
+                    'trending_keywords': keywords[:10]
+                }
+            }
+            logger.info(f"[API Search] 数据库搜索成功: {search_result.results_count} 条结果")
+        else:
+            logger.warning("[API Search] 数据库搜索无结果")
+            results['insight'] = {'success': True, 'data': {'topics': [], 'keywords': [], 'source': 'database_empty'}}
+
+    except Exception as e:
+        logger.error(f"[API Search] 数据库搜索失败: {e}")
+        # 如果数据库不可用，返回空结果（Prome 平台会使用 AI 备用方案）
+        results['insight'] = {'success': False, 'message': f'数据库搜索失败: {str(e)}'}
+
     return jsonify({
         'success': True,
         'query': query,
